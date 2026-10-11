@@ -1,0 +1,149 @@
+# Forecast template: прод-стек на VM. Владелец: DevOps.
+# Запуск из корня шаблона:  make up   (= docker compose --env-file .env -f infra/docker-compose.yml up -d --build)
+# Пути ниже относительны каталога infra/. Переменные берутся из ../.env (см. .env.example).
+#
+# Сборка через прокси: HTTP(S)_PROXY/NO_PROXY уходят в build args (предопределённые ARG Docker,
+# объявлять в Dockerfile не нужно). Прокси для сборки задаётся явно
+# через BUILD_HTTP(S)_PROXY, чтобы прокси shell (часто 127.0.0.1) не попадал в образы случайно. Если прокси слушает на 127.0.0.1 хоста, ставьте BUILD_NETWORK=host.
+# Зеркала: MIRROR_PIP_INDEX / MIRROR_NPM_REGISTRY / MIRROR_NUGET_SOURCE (пусто = источник по умолчанию).
+# Офлайн: OFFLINE=1 + именованный контекст `offline` (= ${OFFLINE_DIR}: wheels/, nuget/, npm/),
+# Dockerfile монтирует его через RUN --mount=type=bind,from=offline,... (пример в README).
+
+name: ${COMPOSE_PROJECT_NAME:-forecast}
+
+x-logging: &logging
+  driver: json-file
+  options: { max-size: "20m", max-file: "5" }
+
+x-build-args: &build-args
+  HTTP_PROXY: ${BUILD_HTTP_PROXY:-}
+  HTTPS_PROXY: ${BUILD_HTTPS_PROXY:-}
+  NO_PROXY: ${BUILD_NO_PROXY:-localhost,127.0.0.1,db,api,ml,frontend}
+  http_proxy: ${BUILD_HTTP_PROXY:-}
+  https_proxy: ${BUILD_HTTPS_PROXY:-}
+  no_proxy: ${BUILD_NO_PROXY:-localhost,127.0.0.1,db,api,ml,frontend}
+  OFFLINE: ${OFFLINE:-0}
+  MIRROR_PIP_INDEX: ${MIRROR_PIP_INDEX:-}
+  MIRROR_NPM_REGISTRY: ${MIRROR_NPM_REGISTRY:-}
+  MIRROR_NUGET_SOURCE: ${MIRROR_NUGET_SOURCE:-}
+
+services:
+  db:
+    image: ${POSTGRES_IMAGE:-postgres:16-alpine}
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?задайте POSTGRES_PASSWORD в .env}
+      POSTGRES_DB: forecast
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:?задайте APP_DB_PASSWORD в .env}
+      ML_DB_PASSWORD: ${ML_DB_PASSWORD:?задайте ML_DB_PASSWORD в .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # Порядок важен: сначала схема (init.sql владельца контрактов), потом смена локальных паролей.
+      - ./db/init.sql:/docker-entrypoint-initdb.d/10-init.sql:ro
+      - ./scripts/db-set-passwords.sh:/docker-entrypoint-initdb.d/20-set-passwords.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d forecast"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    shm_size: 256m
+    logging: *logging
+
+  ml:
+    image: ${REGISTRY_PREFIX:-forecast}/ml:${IMAGE_TAG:-local}
+    build:
+      context: ../ml
+      network: ${BUILD_NETWORK:-default}
+      args: *build-args
+      additional_contexts:
+        offline: ${OFFLINE_DIR:-../offline}
+    restart: unless-stopped
+    environment:
+      ML_DB_DSN: postgresql://ml_reader:${ML_DB_PASSWORD}@db:5432/forecast
+      DATA_DIR: /data
+      MODEL_DIR: /models
+    volumes:
+      - ${DATA_HOST_DIR:-../data}:/data:ro
+      - models:/models
+    depends_on:
+      db: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).status == 200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    logging: *logging
+
+  api:
+    image: ${REGISTRY_PREFIX:-forecast}/api:${IMAGE_TAG:-local}
+    build:
+      context: ../api
+      network: ${BUILD_NETWORK:-default}
+      args: *build-args
+      additional_contexts:
+        offline: ${OFFLINE_DIR:-../offline}
+    restart: unless-stopped
+    environment:
+      ASPNETCORE_URLS: http://+:8080
+      ConnectionStrings__Forecast: Host=db;Port=5432;Database=forecast;Username=app;Password=${APP_DB_PASSWORD}
+      Ml__BaseUrl: http://ml:8000
+      Ml__PredictAttemptTimeoutSeconds: "120"
+      Ml__PredictTotalTimeoutSeconds: "300"
+      Ml__PredictRetries: "2"
+      Ml__HealthTimeoutSeconds: "2"
+      Import__Root: /data
+    volumes:
+      - ${DATA_HOST_DIR:-../data}:/data:ro
+    depends_on:
+      db: { condition: service_healthy }
+      # ML не обязателен для старта: без него /health/ready = Degraded (200).
+      ml: { condition: service_started }
+    # В образе api нужен curl (или замените проверку на свою, см. README «Контракт образов»).
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/health/live >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    logging: *logging
+
+  frontend:
+    image: ${REGISTRY_PREFIX:-forecast}/frontend:${IMAGE_TAG:-local}
+    build:
+      context: ../frontend
+      network: ${BUILD_NETWORK:-default}
+      args:
+        <<: *build-args
+        VITE_API_MODE: live
+      additional_contexts:
+        offline: ${OFFLINE_DIR:-../offline}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/ || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+    logging: *logging
+
+  nginx:
+    image: ${NGINX_IMAGE:-nginx:1.27-alpine}
+    restart: unless-stopped
+    ports:
+      - "${HTTP_PORT:-80}:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      api: { condition: service_started }
+      frontend: { condition: service_started }
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/nginx-health || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+    logging: *logging
+
+volumes:
+  pgdata:
+  models:

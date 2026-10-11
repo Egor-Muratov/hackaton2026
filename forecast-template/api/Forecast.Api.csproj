@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <RootNamespace>Forecast.Api</RootNamespace>
+    <AssemblyName>Forecast.Api</AssemblyName>
+  </PropertyGroup>
+
+  <!-- Заглушка дней 2–4: минимум зависимостей (медленная сеть).
+       TODO(EF Core): после заглушки добавить Npgsql.EntityFrameworkCore.PostgreSQL и маппинг на infra/db/init.sql
+       (без миграций и EnsureCreated). Массовая загрузка останется на NpgsqlBinaryImporter. -->
+  <ItemGroup>
+    <PackageReference Include="Npgsql" Version="10.0.3" />
+    <PackageReference Include="Serilog.AspNetCore" Version="9.0.0" />
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.12" />
+    <PackageReference Include="Scalar.AspNetCore" Version="2.17.14" />
+    <PackageReference Include="Microsoft.Extensions.Http.Resilience" Version="10.10.0" />
+  </ItemGroup>
+
+</Project>

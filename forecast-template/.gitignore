@@ -1,0 +1,41 @@
+# секреты
+.env
+*.pem
+id_rsa*
+
+# офлайн-запас и локальные процессы
+offline/
+.run/
+
+# данные и модели
+data/
+models/
+ml/models/
+*.joblib
+*.pkl
+*.lgb
+
+# python
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+
+# .NET
+bin/
+obj/
+*.user
+TestResults/
+
+# node
+node_modules/
+dist/
+.vite/
+coverage/
+
+# IDE/OS
+.idea/
+.vscode/
+.DS_Store

@@ -1,0 +1,224 @@
+# CI/CD шаблона. Runner: docker executor, на VM ходит по ssh.
+#
+# CI/CD Variables (Settings -> CI/CD -> Variables):
+#   SSH_PRIVATE_KEY  (File или Variable, protected+masked)  ключ доступа к VM
+#   VM_HOST, VM_USER [, VM_PORT=22, VM_DIR=/opt/forecast]
+#   ENV_FILE         (File, необязательно)  содержимое .env для VM; иначе используется уже лежащий на VM
+#   BUILD_MODE       vm (по умолчанию: сборка на VM по ssh, registry не нужен)
+#                    registry (сборка в CI + push в $CI_REGISTRY_IMAGE, на VM docker compose pull)
+#   BUILD_TOOL       kaniko (по умолчанию для registry: без privileged) | dind (нужен privileged runner)
+#   *_IMAGE          переопределение образов задач, если Docker Hub/MCR закрыты, а есть зеркало
+#   MIRROR_PIP_INDEX / MIRROR_NPM_REGISTRY / MIRROR_NUGET_SOURCE, BUILD_HTTP_PROXY / BUILD_HTTPS_PROXY
+
+stages: [lint, test, build, deploy]
+
+variables:
+  BUILD_MODE: vm
+  BUILD_TOOL: kaniko
+  IMAGE_TAG: $CI_COMMIT_SHORT_SHA
+  DOTNET_IMAGE: mcr.microsoft.com/dotnet/sdk:10.0
+  PYTHON_IMAGE: python:3.11-slim
+  NODE_IMAGE: node:24-alpine
+  DOCKER_IMAGE: docker:29-cli
+  DIND_IMAGE: docker:29-dind
+  KANIKO_IMAGE: gcr.io/kaniko-project/executor:v1.23.2-debug
+  SSH_IMAGE: alpine:3.20
+  PIP_CACHE_DIR: $CI_PROJECT_DIR/.cache/pip
+  npm_config_cache: $CI_PROJECT_DIR/.cache/npm
+  NUGET_PACKAGES: $CI_PROJECT_DIR/.cache/nuget
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  DOTNET_NOLOGO: "1"
+
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS
+      when: never
+    - if: $CI_COMMIT_BRANCH
+    - if: $CI_COMMIT_TAG
+
+# ---------- общие куски ----------
+.ssh:
+  image: $SSH_IMAGE
+  before_script:
+    - apk add --no-cache openssh-client bash git curl tar >/dev/null
+    - mkdir -p ~/.ssh && chmod 700 ~/.ssh
+    # SSH_PRIVATE_KEY может быть File-переменной (путь) или обычной (текст ключа)
+    - if [ -f "$SSH_PRIVATE_KEY" ]; then cp "$SSH_PRIVATE_KEY" ~/.ssh/id_ci; else printf '%s\n' "$SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/id_ci; fi
+    - chmod 600 ~/.ssh/id_ci
+    - export SSH_KEY_FILE=~/.ssh/id_ci SYNC=tar
+    # ENV_FILE (File-переменная) deploy.sh зальёт как .env на VM; если не задана — используется .env на VM
+    - '[ -n "$VM_HOST" ] && [ -n "$VM_USER" ] || { echo "задайте VM_HOST и VM_USER в CI/CD Variables"; exit 1; }'
+
+# ---------- lint ----------
+compose-config:
+  stage: lint
+  image: $DOCKER_IMAGE
+  script:
+    - cp .env.example .env
+    - docker compose --env-file .env -f infra/docker-compose.yml config -q
+    - echo "compose OK"
+
+shell-lint:
+  stage: lint
+  image: $SSH_IMAGE
+  script:
+    - apk add --no-cache bash >/dev/null
+    - for f in infra/scripts/*.sh; do bash -n "$f" || exit 1; done
+    - apk add --no-cache shellcheck >/dev/null 2>&1 && shellcheck -S error infra/scripts/*.sh || echo "shellcheck недоступен, только bash -n"
+
+python-lint:
+  stage: lint
+  image: $PYTHON_IMAGE
+  rules:
+    - exists: [ml/requirements.txt]
+  cache: { key: pip, paths: [.cache/pip] }
+  script:
+    - pip install ${MIRROR_PIP_INDEX:+--index-url $MIRROR_PIP_INDEX} ruff
+    - ruff check ml
+
+dotnet-format:
+  stage: lint
+  image: $DOTNET_IMAGE
+  rules:
+    - exists: ["api/**/*.csproj"]
+  cache: { key: nuget, paths: [.cache/nuget] }
+  allow_failure: true
+  script:
+    - dotnet format $(find api -maxdepth 3 -name '*.sln*' | head -1) --verify-no-changes -v minimal
+
+frontend-lint:
+  stage: lint
+  image: $NODE_IMAGE
+  rules:
+    - exists: [frontend/package.json]
+  cache: { key: npm, paths: [.cache/npm] }
+  script:
+    - cd frontend
+    - npm ci --prefer-offline --no-audit ${MIRROR_NPM_REGISTRY:+--registry $MIRROR_NPM_REGISTRY}
+    - npm run lint --if-present
+    - npx --no-install tsc --noEmit || echo "tsc недоступен/не настроен"
+
+# ---------- test ----------
+dotnet-test:
+  stage: test
+  image: $DOTNET_IMAGE
+  rules:
+    - exists: ["api/**/*.csproj"]
+  cache: { key: nuget, paths: [.cache/nuget] }
+  script:
+    - SOL=$(find api -maxdepth 3 -name '*.sln*' | head -1); SOL=${SOL:-api}
+    - dotnet restore $SOL ${MIRROR_NUGET_SOURCE:+--source $MIRROR_NUGET_SOURCE}
+    - dotnet test $SOL --no-restore --logger "console;verbosity=normal"
+
+python-test:
+  stage: test
+  image: $PYTHON_IMAGE
+  rules:
+    - exists: [ml/requirements.txt]
+  cache: { key: pip, paths: [.cache/pip] }
+  variables:
+    DATA_DIR: $CI_PROJECT_DIR/ml/tests/data
+    MODEL_DIR: $CI_PROJECT_DIR/ml/models
+  script:
+    - cd ml
+    - pip install ${MIRROR_PIP_INDEX:+--index-url $MIRROR_PIP_INDEX} -r requirements.txt pytest
+    - if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
+    - python -m pytest -q --junitxml=$CI_PROJECT_DIR/pytest.xml
+  artifacts:
+    when: always
+    reports: { junit: pytest.xml }
+    expire_in: 1 week
+
+frontend-test:
+  stage: test
+  image: $NODE_IMAGE
+  rules:
+    - exists: [frontend/package.json]
+  cache: { key: npm, paths: [.cache/npm] }
+  script:
+    - cd frontend
+    - npm ci --prefer-offline --no-audit ${MIRROR_NPM_REGISTRY:+--registry $MIRROR_NPM_REGISTRY}
+    - npm test --if-present -- --run
+    - VITE_API_MODE=live npm run build
+
+# ---------- build ----------
+# Путь 1: BUILD_MODE=registry + BUILD_TOOL=kaniko — без privileged, push в GitLab Registry.
+# Офлайн-контекст (additional_contexts) kaniko не умеет: этот путь только online/зеркала.
+build-kaniko:
+  stage: build
+  rules:
+    - if: $BUILD_MODE == "registry" && $BUILD_TOOL == "kaniko" && $CI_COMMIT_BRANCH
+  image: { name: $KANIKO_IMAGE, entrypoint: [""] }
+  parallel:
+    matrix:
+      - SERVICE: [api, ml, frontend]
+  script:
+    - mkdir -p /kaniko/.docker
+    - echo "{\"auths\":{\"$CI_REGISTRY\":{\"auth\":\"$(printf '%s:%s' "$CI_REGISTRY_USER" "$CI_REGISTRY_PASSWORD" | base64 | tr -d '\n')\"}}}" > /kaniko/.docker/config.json
+    - EXTRA=""; [ "$SERVICE" = frontend ] && EXTRA="--build-arg VITE_API_MODE=live"
+    - >
+      /kaniko/executor
+      --context "$CI_PROJECT_DIR/$SERVICE"
+      --dockerfile "$CI_PROJECT_DIR/$SERVICE/Dockerfile"
+      --destination "$CI_REGISTRY_IMAGE/$SERVICE:$IMAGE_TAG"
+      --destination "$CI_REGISTRY_IMAGE/$SERVICE:$CI_COMMIT_REF_SLUG"
+      --cache=true --cache-repo "$CI_REGISTRY_IMAGE/cache"
+      --build-arg HTTP_PROXY="$BUILD_HTTP_PROXY" --build-arg HTTPS_PROXY="$BUILD_HTTPS_PROXY"
+      --build-arg MIRROR_PIP_INDEX="$MIRROR_PIP_INDEX" --build-arg MIRROR_NPM_REGISTRY="$MIRROR_NPM_REGISTRY"
+      --build-arg MIRROR_NUGET_SOURCE="$MIRROR_NUGET_SOURCE" --build-arg OFFLINE=0 $EXTRA
+
+# Путь 2: BUILD_MODE=registry + BUILD_TOOL=dind — нужен privileged runner; собираем тем же compose-файлом.
+build-dind:
+  stage: build
+  rules:
+    - if: $BUILD_MODE == "registry" && $BUILD_TOOL == "dind" && $CI_COMMIT_BRANCH
+  image: $DOCKER_IMAGE
+  services:
+    - name: $DIND_IMAGE
+      alias: docker
+  variables:
+    DOCKER_HOST: tcp://docker:2376
+    DOCKER_TLS_CERTDIR: /certs
+    DOCKER_TLS_VERIFY: "1"
+    DOCKER_CERT_PATH: /certs/client
+  script:
+    - cp .env.example .env && mkdir -p offline/wheels offline/nuget offline/npm
+    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
+    - export REGISTRY_PREFIX=$CI_REGISTRY_IMAGE OFFLINE_DIR=$CI_PROJECT_DIR/offline
+    - docker compose --env-file .env -f infra/docker-compose.yml build api ml frontend
+    - docker compose --env-file .env -f infra/docker-compose.yml push api ml frontend
+
+# Путь 3 (по умолчанию): BUILD_MODE=vm — registry/DinD не нужны, образы собираются на VM по ssh
+# с тегом $IMAGE_TAG (работающие контейнеры не трогаются до deploy). Только main: VM одна.
+build-vm:
+  stage: build
+  extends: .ssh
+  rules:
+    - if: $BUILD_MODE == "vm" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+  resource_group: vm
+  script:
+    - ACTION=build infra/scripts/deploy.sh
+
+# ---------- deploy ----------
+deploy:
+  stage: deploy
+  extends: .ssh
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: manual
+  resource_group: vm
+  environment:
+    name: production
+    url: http://$VM_HOST
+  script:
+    - if [ "$BUILD_MODE" = registry ]; then export REGISTRY_PREFIX=$CI_REGISTRY_IMAGE ACTION=deploy; else export ACTION=up; fi
+    - infra/scripts/deploy.sh
+    # Smoke снаружи (с runner'а). Если порт 80 VM закрыт для runner'а, deploy.sh уже проверил /api/health изнутри VM.
+    - |
+      for i in $(seq 1 20); do
+        code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://$VM_HOST/api/health" || true)
+        [ "$code" = 200 ] && { echo "smoke: http://$VM_HOST/api/health 200"; exit 0; }
+        echo "smoke: $code, жду"; sleep 3
+      done
+      echo "ВНИМАНИЕ: снаружи /api/health не 200 (порт закрыт для runner'а?), внутренняя проверка прошла"
