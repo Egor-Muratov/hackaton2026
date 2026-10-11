@@ -1,0 +1,312 @@
+openapi: 3.1.0
+info:
+  title: Forecast ML Service API (C# API <-> ML)
+  version: 0.1.0
+  description: |
+    Внутренний контракт C# API с ML-сервисом (FastAPI). Владелец: C#-бэкенд. Ревьюер: ML.
+    Наружу (через nginx) не публикуется.
+
+    Общие правила (подробнее в CONVENTIONS.md):
+    - JSON в snake_case. Даты `YYYY-MM-DD`. Отсутствующее значение — `null`, никогда NaN/Infinity.
+    - Интервал называется `lower`/`upper` (C# переводит в `lo`/`hi` для фронта).
+    - История в теле НЕ передаётся: ML читает её из view `ml_observations` в Postgres под
+      пользователем `ml_reader` (env `ML_DB_DSN`), справочники (stores, holidays, oil, transactions) —
+      из каталога `DATA_DIR` (только чтение). ML не пишет в БД.
+    - Ключ ряда (`series_key`) — произвольный JSON-объект. Имена полей = `series_keys` из `ml/config.yaml`
+      = колонки-ключи view `ml_observations`; типы значений как в view (в репетиции
+      `{"store_nbr": 1, "family": "AUTOMOTIVE"}`: число и строка). C# не хардкодит имена ключей и
+      сопоставляет ряды по канонизированному объекту.
+    - Ошибки — формат FastAPI: `{"detail": "..."}` или `{"detail": [ {loc, msg, type}, ... ]}`.
+      C# не разбирает тело ошибки, а пишет его в лог и в `forecast_runs.error`.
+    - C# передаёт заголовок `X-Correlation-Id`; ML пишет его в свои логи.
+    - Таймауты со стороны C#: `/predict` 120 с на попытку, 300 с всего, 2 ретрая только на 5xx и сетевые
+      ошибки (422 не ретраится). `/health` — 2 с без ретраев. Повтор `/predict` должен быть безопасен
+      (запрос без побочных эффектов).
+
+    Пометка `x-stub: false` — эндпоинт не входит в заглушку дней 2–4.
+servers:
+  - url: http://localhost:8000
+    description: Локально (uvicorn)
+  - url: http://ml:8000
+    description: compose
+
+paths:
+  /health:
+    get:
+      operationId: health
+      summary: Состояние сервиса и модели
+      description: |
+        Всегда 200, пока процесс жив. `model_loaded=false` — модель ещё не загружена/не обучена;
+        C# тогда отдаёт `Degraded` в своём health, а `/predict` вернёт 503.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Health' }
+              example: { status: ok, model_version: lgbm-2017-08-15-a1b2, model_loaded: true }
+
+  /predict:
+    post:
+      operationId: predict
+      summary: Прогноз по рядам датасета (синхронно)
+      description: |
+        ML читает из `ml_observations` строки с `dataset_id` = запрошенному:
+        - история — `date <= cutoff_date` и `sales IS NOT NULL`;
+        - известные будущие признаки (`onpromotion`) — `cutoff_date < date <= cutoff_date + horizon`
+          (строки с `sales IS NULL`, например импортированный `test.csv`). Если их нет, ML подставляет
+          значение по умолчанию (0) и добавляет предупреждение в `warnings`.
+
+        Гарантии ответа:
+        - каждый запрошенный ряд (или каждый ряд датасета при `series_keys = null`) присутствует в `forecasts`
+          ровно `horizon` раз, на даты `cutoff_date+1 .. cutoff_date+horizon`; ряды из одних нулей тоже
+          (прогноз 0), а не пропускаются;
+        - `0 <= lower <= yhat <= upper` для рядов (интервал рядов обязателен);
+        - `aggregate` — сумма по ВСЕМ рядам датасета (не только по `series_keys`), `horizon` точек;
+          `lower`/`upper` агрегата могут быть `null` (день 1), со дня 2 считаются по остаткам агрегата;
+          при `include_aggregate=false` поле равно `null`.
+        - `cv_metrics` — метрики CV загруженной модели (не зависят от запроса).
+
+        Ошибки:
+        - 422 — невалидный запрос, неизвестный `dataset_id`, нет истории до `cutoff_date`,
+          неизвестные ключи в `series_keys`, `horizon` больше горизонта модели, `interval` не поддержан;
+        - 503 — модель не загружена (C# ретраит как 5xx);
+        - 500 — прочее.
+      parameters:
+        - name: X-Correlation-Id
+          in: header
+          required: false
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PredictRequest' }
+            examples:
+              all:
+                summary: Все ряды + агрегат (основной вызов C#)
+                value:
+                  dataset_id: 3f1c2a9e-7b1d-4c55-9a51-2b0c1d7e8f00
+                  run_id: 9b2f4c1e-0a6d-4f7e-8d33-5c1b2a3d4e5f
+                  cutoff_date: '2017-08-15'
+                  horizon: 16
+                  series_keys: null
+                  include_aggregate: true
+                  interval: 0.8
+              subset:
+                summary: Два ряда, без агрегата
+                value:
+                  dataset_id: 3f1c2a9e-7b1d-4c55-9a51-2b0c1d7e8f00
+                  cutoff_date: '2017-08-15'
+                  horizon: 7
+                  series_keys:
+                    - { store_nbr: 1, family: AUTOMOTIVE }
+                    - { store_nbr: 44, family: GROCERY I }
+                  include_aggregate: false
+                  interval: 0.8
+      responses:
+        '200':
+          description: Прогноз
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PredictResponse' }
+              example:
+                model_version: lgbm-2017-08-15-a1b2
+                dataset_id: 3f1c2a9e-7b1d-4c55-9a51-2b0c1d7e8f00
+                cutoff_date: '2017-08-15'
+                horizon: 16
+                interval: 0.8
+                forecasts:
+                  - { series_key: { store_nbr: 1, family: AUTOMOTIVE }, date: '2017-08-16', yhat: 4.21, lower: 1.8, upper: 7.95 }
+                aggregate:
+                  - { date: '2017-08-16', yhat: 812345.6, lower: null, upper: null }
+                cv_metrics: { rmsle: 0.401, mae: 61.2, baseline_rmsle: 0.47 }
+                warnings: ['series_all_zero: 52']
+        '422': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+
+  /train:
+    post:
+      operationId: train
+      summary: Запуск обучения (асинхронно) — НЕ В ЗАГЛУШКЕ
+      x-stub: false
+      description: |
+        **Не входит в заглушку дней 2–4.** На репетиции модель обучается офлайн (`train.py`) и лежит в `MODEL_DIR`.
+        Ответ сразу `202`; статус — `GET /train/{job_id}`. После `done` ML сам перезагружает модель,
+        и `/health.model_version` меняется.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [dataset_id]
+              properties:
+                dataset_id: { type: string, format: uuid }
+                cutoff_date:
+                  type: [string, 'null']
+                  format: date
+                  description: Последняя дата обучения; null — последняя дата с sales
+                config_overrides:
+                  type: object
+                  description: Переопределения ключей ml/config.yaml
+                  additionalProperties: true
+      responses:
+        '202':
+          description: Принято
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TrainJob' }
+        '422': { $ref: '#/components/responses/Error' }
+
+  /train/{job_id}:
+    get:
+      operationId: getTrainJob
+      summary: Статус обучения — НЕ В ЗАГЛУШКЕ
+      x-stub: false
+      parameters:
+        - name: job_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Статус
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TrainJob' }
+        '404': { $ref: '#/components/responses/Error' }
+
+components:
+  responses:
+    Error:
+      description: Ошибка (формат FastAPI)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+  schemas:
+    Health:
+      type: object
+      required: [status, model_version, model_loaded]
+      properties:
+        status: { type: string, enum: [ok] }
+        model_version: { type: [string, 'null'] }
+        model_loaded: { type: boolean }
+
+    SeriesKey:
+      type: object
+      description: Ключ ряда; имена полей из ml/config.yaml `series_keys`. Порядок полей не важен
+      minProperties: 1
+      additionalProperties:
+        type: [string, integer, number]
+      examples:
+        - { store_nbr: 1, family: AUTOMOTIVE }
+
+    PredictRequest:
+      type: object
+      required: [dataset_id, cutoff_date, horizon, series_keys, include_aggregate, interval]
+      additionalProperties: false
+      properties:
+        dataset_id: { type: string, format: uuid, description: '= datasetId в C#, = ml_observations.dataset_id' }
+        run_id:
+          type: [string, 'null']
+          format: uuid
+          description: runId из C#, только для логов/корреляции
+        cutoff_date: { type: string, format: date, description: Последняя дата истории }
+        horizon: { type: integer, minimum: 1, maximum: 16 }
+        series_keys:
+          description: Список рядов; `null` — все ряды датасета. Пустой массив — 422
+          oneOf:
+            - type: array
+              minItems: 1
+              items: { $ref: '#/components/schemas/SeriesKey' }
+            - type: 'null'
+        include_aggregate: { type: boolean, default: false }
+        interval:
+          type: number
+          exclusiveMinimum: 0
+          exclusiveMaximum: 1
+          default: 0.8
+          description: Центральное покрытие интервала. 0.8 -> lower = p10, upper = p90. Другие значения ML может отклонить 422
+
+    ForecastPoint:
+      type: object
+      required: [series_key, date, yhat, lower, upper]
+      properties:
+        series_key: { $ref: '#/components/schemas/SeriesKey' }
+        date: { type: string, format: date }
+        yhat: { type: number, minimum: 0 }
+        lower: { type: number, minimum: 0 }
+        upper: { type: number, minimum: 0 }
+
+    AggregatePoint:
+      type: object
+      required: [date, yhat, lower, upper]
+      properties:
+        date: { type: string, format: date }
+        yhat: { type: number, minimum: 0 }
+        lower: { type: [number, 'null'], minimum: 0 }
+        upper: { type: [number, 'null'], minimum: 0 }
+
+    CvMetrics:
+      type: object
+      required: [rmsle, mae, baseline_rmsle]
+      description: Метрики кросс-валидации; дополнительные метрики допустимы (C# их игнорирует)
+      properties:
+        rmsle: { type: [number, 'null'] }
+        mae: { type: [number, 'null'] }
+        baseline_rmsle: { type: [number, 'null'] }
+      additionalProperties: { type: [number, 'null'] }
+
+    PredictResponse:
+      type: object
+      required: [model_version, dataset_id, cutoff_date, horizon, interval, forecasts, aggregate, cv_metrics, warnings]
+      properties:
+        model_version: { type: string }
+        dataset_id: { type: string, format: uuid }
+        cutoff_date: { type: string, format: date }
+        horizon: { type: integer }
+        interval: { type: number }
+        forecasts:
+          type: array
+          description: Длинный формат, сортировка не гарантируется (1782 x 16 ~ 28.5 тыс. строк, ~3 МБ)
+          items: { $ref: '#/components/schemas/ForecastPoint' }
+        aggregate:
+          description: Сумма по всем рядам; null при include_aggregate=false
+          oneOf:
+            - type: array
+              items: { $ref: '#/components/schemas/AggregatePoint' }
+            - type: 'null'
+        cv_metrics: { $ref: '#/components/schemas/CvMetrics' }
+        warnings:
+          type: array
+          items: { type: string }
+          description: 'Машиночитаемые строки вида "code: detail", C# пишет их в лог'
+
+    TrainJob:
+      type: object
+      required: [job_id, status]
+      properties:
+        job_id: { type: string }
+        status: { type: string, enum: [queued, running, done, failed] }
+        model_version: { type: [string, 'null'] }
+        cv_metrics:
+          oneOf: [ { $ref: '#/components/schemas/CvMetrics' }, { type: 'null' } ]
+        error: { type: [string, 'null'] }
+
+    Error:
+      type: object
+      required: [detail]
+      properties:
+        detail:
+          oneOf:
+            - type: string
+            - type: array
+              items:
+                type: object
+                properties:
+                  loc: { type: array, items: { type: [string, integer] } }
+                  msg: { type: string }
+                  type: { type: string }

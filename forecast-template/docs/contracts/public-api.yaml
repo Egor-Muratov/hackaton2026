@@ -1,0 +1,549 @@
+openapi: 3.1.0
+info:
+  title: Forecast Public API (frontend <-> C# API)
+  version: 0.1.0
+  description: |
+    Контракт фронтенда с C# API. Владелец: C#-бэкенд. Ревьюер: фронтенд.
+
+    Общие правила (подробнее в CONVENTIONS.md):
+    - Все пути под префиксом `/api`. Фронт ходит только сюда.
+    - JSON в camelCase. Даты строкой `YYYY-MM-DD` (без времени и пояса), моменты времени — ISO 8601 UTC (`2017-08-16T10:00:00Z`).
+    - Отсутствующее значение — `null` (никогда не NaN и не 0). Поля из схем присутствуют всегда, даже если `null`.
+    - Идентификаторы `datasetId`, `jobId`, `runId` — UUID строкой.
+    - Ошибки: `application/problem+json` (ProblemDetails, RFC 9457). Ошибки валидации — с полем `errors`.
+    - Долгие операции асинхронные: `202` + `Location`, затем опрос статуса раз в 2 с.
+    - Ключ ряда в репетиции — `store` (store_nbr) + `family`. Агрегат обозначается значением `all`.
+
+    Пометка `x-stub: false` — эндпоинт не входит в заглушку дней 2–4.
+servers:
+  - url: http://localhost:5173
+    description: Локально через Vite proxy (/api -> http://localhost:5080)
+  - url: http://localhost:5080
+    description: Локально, API напрямую (dotnet run)
+  - url: http://localhost
+    description: compose на VM, через nginx :80
+
+tags:
+  - name: health
+  - name: datasets
+  - name: jobs
+  - name: meta
+  - name: forecasts
+
+paths:
+  /api/health:
+    get:
+      tags: [health]
+      operationId: getHealth
+      summary: Готовность сервиса (алиас /health/ready)
+      description: |
+        В compose nginx проксирует `/api/health` -> `api:8080/health/ready`; локально API сам отвечает на `/api/health`.
+        `200`, если доступна БД. Недоступный ML или незагруженная модель дают `Degraded` с кодом 200
+        (история и последний прогноз остаются доступны). `503` — БД недоступна.
+        Фронт считает API живым, если пришёл 200 за 3 с; иначе включает мок-режим.
+      responses:
+        '200':
+          description: Healthy или Degraded
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Health' }
+              example: { status: Healthy, checks: { db: Healthy, ml: Healthy }, modelVersion: lgbm-2017-08-15-a1b2 }
+        '503':
+          description: Unhealthy (нет БД)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Health' }
+
+  /api/datasets/import:
+    post:
+      tags: [datasets]
+      operationId: importDataset
+      summary: Импорт CSV, уже лежащего на сервере
+      description: |
+        `path` — относительный путь внутри каталога импорта API (env `Import__Root`; в compose это `/data`,
+        локально — `hackaton/data`). Абсолютные пути и `..` запрещены (400).
+
+        Ожидаемые колонки: `date, store_nbr, family, onpromotion` и необязательная `sales`; колонка `id` игнорируется.
+        Файл без `sales` (например `test.csv`) импортируется с `sales = null` — это известные будущие признаки
+        (промо) для горизонта прогноза.
+
+        Без `datasetId` создаётся новый датасет. С `datasetId` строки добавляются в существующий
+        (так `test.csv` докладывается к `train.csv`); совпадающие (ряд, дата) перезаписываются.
+
+        Ответ сразу, импорт идёт в фоне. Опрос: `GET /api/jobs/{jobId}`. Датасет становится «последним»
+        (`GET /api/meta`.latestDatasetId) только после `done` задачи импорта.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ImportDatasetRequest' }
+            examples:
+              train: { value: { path: store-sales/train.csv, name: store-sales } }
+              appendTest: { value: { path: store-sales/test.csv, datasetId: 3f1c2a9e-7b1d-4c55-9a51-2b0c1d7e8f00 } }
+      responses:
+        '202':
+          description: Импорт поставлен в очередь
+          headers:
+            Location:
+              description: /api/jobs/{jobId}
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ImportAccepted' }
+        '400': { $ref: '#/components/responses/ValidationProblem' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/datasets:
+    post:
+      tags: [datasets]
+      operationId: uploadDataset
+      summary: Загрузка CSV через multipart (ДЕНЬ 2, НЕ В ЗАГЛУШКЕ)
+      x-stub: false
+      description: |
+        **День 2, не входит в заглушку.** Тот же импорт, но файл приходит в теле запроса
+        (nginx `client_max_body_size 500m`). Семантика полей и ответа как у `POST /api/datasets/import`.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+                name: { type: [string, 'null'] }
+                datasetId: { type: [string, 'null'], format: uuid }
+      responses:
+        '202':
+          description: Импорт поставлен в очередь
+          headers:
+            Location:
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ImportAccepted' }
+        '400': { $ref: '#/components/responses/ValidationProblem' }
+        '413':
+          description: Файл слишком большой
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
+
+  /api/jobs/{jobId}:
+    get:
+      tags: [jobs]
+      operationId: getJob
+      summary: Статус фоновой задачи (импорт)
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Статус задачи
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Job' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/meta:
+    get:
+      tags: [meta]
+      operationId: getMeta
+      summary: Справочники для фильтров и сводка по последнему датасету
+      description: |
+        Без параметров описывает последний готовый датасет. Если датасетов нет — 200 с пустыми массивами
+        и `null` в остальных полях (фронт показывает «загрузите данные»).
+      parameters:
+        - name: datasetId
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Метаданные
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Meta' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/forecasts:
+    post:
+      tags: [forecasts]
+      operationId: createForecast
+      summary: Запустить прогноз по всем рядам датасета
+      description: |
+        Асинхронно: API создаёт run, фоновый воркер вызывает ML `POST /predict`
+        (все ряды + агрегат), складывает результат в БД. Опрос: `GET /api/forecasts/{runId}` раз в 2 с.
+        - `datasetId` по умолчанию — последний готовый датасет.
+        - `cutoffDate` по умолчанию — последняя дата с `sales != null` в датасете (для store-sales 2017-08-15).
+          Прогноз строится на даты `cutoffDate+1 .. cutoffDate+horizon`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateForecastRequest' }
+            example: { horizon: 16 }
+      responses:
+        '202':
+          description: Прогон поставлен в очередь
+          headers:
+            Location:
+              description: /api/forecasts/{runId}
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ForecastAccepted' }
+        '400': { $ref: '#/components/responses/ValidationProblem' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/forecasts/{runId}:
+    get:
+      tags: [forecasts]
+      operationId: getForecastRun
+      summary: Статус и метрики прогона
+      parameters:
+        - $ref: '#/components/parameters/RunId'
+      responses:
+        '200':
+          description: Прогон
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ForecastRun' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/forecasts/latest/series:
+    get:
+      tags: [forecasts]
+      operationId: getLatestForecastSeries
+      summary: История + прогноз одного ряда или агрегата (для графика)
+      description: |
+        Берёт последний прогон со статусом `done` для последнего готового датасета
+        (или явно заданный `runId`).
+        - `store=all` и/или `family=all` — агрегат (сумма). Полный агрегат (`all`/`all`) приходит от ML
+          и может иметь интервал; частичные агрегаты (`all`+семейство, магазин+`all`) API суммирует сам,
+          у них `lo = hi = null`. Фронт не рисует полосу, если `lo`/`hi` равны `null`.
+        - История агрегата: сумма `sales` и сумма `onpromotion` по входящим рядам.
+        - В `history` только даты с известным `sales` (до cutoff включительно). Порядок по дате возрастающий.
+        - Если датасет есть, а готового прогона ещё нет: 200, `runId = null`, `forecast = []`, `metrics = null`.
+        - `metrics` — метрики CV модели по всем рядам (не по выбранному ряду).
+      parameters:
+        - name: store
+          in: query
+          required: false
+          description: Номер магазина или `all`
+          schema: { type: string, default: all, pattern: '^(all|[0-9]+)$' }
+          example: '44'
+        - name: family
+          in: query
+          required: false
+          description: Семейство товаров (точное значение из /api/meta) или `all`
+          schema: { type: string, default: all }
+          example: GROCERY I
+        - name: horizon
+          in: query
+          required: false
+          description: Обрезать прогноз до первых N дней (не больше горизонта прогона)
+          schema: { type: integer, minimum: 1, maximum: 16 }
+        - name: historyDays
+          in: query
+          required: false
+          description: Отдать только последние N дней истории; по умолчанию вся история
+          schema: { type: integer, minimum: 1 }
+        - name: runId
+          in: query
+          required: false
+          description: Конкретный прогон вместо последнего
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Ряд для графика
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SeriesForecast' }
+        '400': { $ref: '#/components/responses/ValidationProblem' }
+        '404':
+          description: Нет ни одного датасета, неизвестный магазин/семейство или runId
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
+
+  /api/forecasts/{runId}/export.csv:
+    get:
+      tags: [forecasts]
+      operationId: exportForecastCsv
+      summary: Выгрузка прогноза прогона в CSV
+      description: |
+        UTF-8, разделитель `,`, первая строка — заголовок, `null` — пустая ячейка, десятичная точка.
+        Колонки: ключи ряда в порядке их появления (в репетиции `store_nbr,family`), затем `date,yhat,lo,hi`.
+        Только ряды, без агрегата. Сортировка: ключи, затем дата.
+        `Content-Disposition: attachment; filename="forecast-{runId}.csv"`. Прогон не в статусе `done` -> 409.
+      parameters:
+        - $ref: '#/components/parameters/RunId'
+      responses:
+        '200':
+          description: CSV
+          content:
+            text/csv:
+              schema: { type: string }
+              example: |
+                store_nbr,family,date,yhat,lo,hi
+                1,AUTOMOTIVE,2017-08-16,4.21,1.80,7.95
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Прогон ещё не завершён или упал
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
+
+components:
+  parameters:
+    RunId:
+      name: runId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+
+  responses:
+    ValidationProblem:
+      description: Ошибка валидации запроса
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/ValidationProblemDetails' }
+    NotFound:
+      description: Ресурс не найден
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/ProblemDetails' }
+
+  schemas:
+    LocalDate:
+      type: string
+      format: date
+      description: Дата `YYYY-MM-DD`
+      examples: ['2017-08-15']
+
+    JobStatus:
+      type: string
+      enum: [queued, running, done, failed]
+
+    HealthStatus:
+      type: string
+      enum: [Healthy, Degraded, Unhealthy]
+
+    Health:
+      type: object
+      required: [status, checks, modelVersion]
+      properties:
+        status: { $ref: '#/components/schemas/HealthStatus' }
+        checks:
+          type: object
+          required: [db, ml]
+          properties:
+            db: { $ref: '#/components/schemas/HealthStatus' }
+            ml:
+              $ref: '#/components/schemas/HealthStatus'
+              description: Degraded, если ML жив, но модель не загружена
+        modelVersion: { type: [string, 'null'], description: Версия модели из ML /health }
+
+    ImportDatasetRequest:
+      type: object
+      required: [path]
+      additionalProperties: false
+      properties:
+        path:
+          type: string
+          minLength: 1
+          description: Путь относительно каталога импорта API, например `store-sales/train.csv`
+        name:
+          type: [string, 'null']
+          description: Имя датасета; по умолчанию имя каталога файла. Игнорируется при `datasetId`
+        datasetId:
+          type: [string, 'null']
+          format: uuid
+          description: Дописать в существующий датасет вместо создания нового
+
+    ImportAccepted:
+      type: object
+      required: [datasetId, jobId]
+      properties:
+        datasetId: { type: string, format: uuid }
+        jobId: { type: string, format: uuid }
+
+    ImportWarning:
+      type: object
+      required: [line, message]
+      properties:
+        line: { type: [integer, 'null'], description: Номер строки файла (1 — заголовок) }
+        message: { type: string }
+
+    Job:
+      type: object
+      required: [jobId, kind, status, progress, message, datasetId, rows, seriesCount, dateFrom, dateTo, warnings, error, createdAt, startedAt, finishedAt]
+      properties:
+        jobId: { type: string, format: uuid }
+        kind: { type: string, enum: [import] , description: В заглушке только import; train появится позже }
+        status: { $ref: '#/components/schemas/JobStatus' }
+        progress: { type: [number, 'null'], minimum: 0, maximum: 1 }
+        message: { type: [string, 'null'], description: 'Человекочитаемый этап, например «COPY 1.2M/3.0M строк»' }
+        datasetId: { type: [string, 'null'], format: uuid }
+        rows: { type: [integer, 'null'], description: Сколько строк загружено (после done) }
+        seriesCount: { type: [integer, 'null'] }
+        dateFrom: { oneOf: [ { $ref: '#/components/schemas/LocalDate' }, { type: 'null' } ] }
+        dateTo: { oneOf: [ { $ref: '#/components/schemas/LocalDate' }, { type: 'null' } ] }
+        warnings:
+          type: array
+          maxItems: 100
+          description: Первые 100 проблемных строк (пропущены, импорт не падает)
+          items: { $ref: '#/components/schemas/ImportWarning' }
+        error: { type: [string, 'null'], description: Причина при status=failed }
+        createdAt: { type: string, format: date-time }
+        startedAt: { type: [string, 'null'], format: date-time }
+        finishedAt: { type: [string, 'null'], format: date-time }
+
+    Store:
+      type: object
+      required: [storeNbr, city, state, type, cluster]
+      properties:
+        storeNbr: { type: integer }
+        city: { type: [string, 'null'] }
+        state: { type: [string, 'null'] }
+        type: { type: [string, 'null'] }
+        cluster: { type: [integer, 'null'] }
+
+    Meta:
+      type: object
+      required: [datasetId, latestDatasetId, stores, families, seriesCount, historyFrom, historyTo, maxHorizon, intervalLevel, latestRunId, modelVersion]
+      properties:
+        datasetId: { type: [string, 'null'], format: uuid, description: 'Датасет, который описывает ответ' }
+        latestDatasetId: { type: [string, 'null'], format: uuid, description: Последний готовый датасет }
+        stores:
+          type: array
+          description: Отсортированы по storeNbr. Атрибуты null, если не известны
+          items: { $ref: '#/components/schemas/Store' }
+        families:
+          type: array
+          description: Отсортированы по алфавиту
+          items: { type: string }
+        seriesCount: { type: integer }
+        historyFrom: { oneOf: [ { $ref: '#/components/schemas/LocalDate' }, { type: 'null' } ] }
+        historyTo:
+          oneOf: [ { $ref: '#/components/schemas/LocalDate' }, { type: 'null' } ]
+          description: Последняя дата с известным sales (cutoff по умолчанию)
+        maxHorizon: { type: integer, const: 16 }
+        intervalLevel: { type: number, const: 0.8 }
+        latestRunId: { type: [string, 'null'], format: uuid, description: Последний done-прогон этого датасета }
+        modelVersion: { type: [string, 'null'] }
+
+    CreateForecastRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        datasetId: { type: [string, 'null'], format: uuid }
+        horizon: { type: integer, minimum: 1, maximum: 16, default: 16 }
+        cutoffDate:
+          oneOf: [ { $ref: '#/components/schemas/LocalDate' }, { type: 'null' } ]
+          description: Должна лежать в [historyFrom, historyTo] датасета, иначе 400
+
+    ForecastAccepted:
+      type: object
+      required: [runId, status]
+      properties:
+        runId: { type: string, format: uuid }
+        status: { type: string, const: queued }
+
+    Metrics:
+      type: object
+      description: Метрики CV модели (цифры для слайда). Неизвестная метрика — null
+      required: [rmsle, mae, baselineRmsle]
+      properties:
+        rmsle: { type: [number, 'null'] }
+        mae: { type: [number, 'null'] }
+        baselineRmsle: { type: [number, 'null'], description: RMSLE бейзлайна (сезонный naive / среднее по дню недели) }
+
+    ForecastRun:
+      type: object
+      required: [runId, datasetId, status, horizon, cutoffDate, modelVersion, intervalLevel, metrics, error, createdAt, startedAt, finishedAt]
+      properties:
+        runId: { type: string, format: uuid }
+        datasetId: { type: string, format: uuid }
+        status: { $ref: '#/components/schemas/JobStatus' }
+        horizon: { type: integer, minimum: 1, maximum: 16 }
+        cutoffDate: { $ref: '#/components/schemas/LocalDate' }
+        modelVersion: { type: [string, 'null'], description: Заполняется после done }
+        intervalLevel: { type: number, const: 0.8 }
+        metrics:
+          oneOf: [ { $ref: '#/components/schemas/Metrics' }, { type: 'null' } ]
+        error: { type: [string, 'null'], description: Причина при failed (в т.ч. текст 422 от ML) }
+        createdAt: { type: string, format: date-time }
+        startedAt: { type: [string, 'null'], format: date-time }
+        finishedAt: { type: [string, 'null'], format: date-time }
+
+    HistoryPoint:
+      type: object
+      required: [date, sales, onpromotion]
+      properties:
+        date: { $ref: '#/components/schemas/LocalDate' }
+        sales: { type: number, minimum: 0 }
+        onpromotion: { type: [integer, 'null'], minimum: 0 }
+
+    ForecastPoint:
+      type: object
+      required: [date, yhat, lo, hi]
+      description: 'Инвариант: 0 <= lo <= yhat <= hi, если lo/hi не null'
+      properties:
+        date: { $ref: '#/components/schemas/LocalDate' }
+        yhat: { type: number, minimum: 0 }
+        lo: { type: [number, 'null'], minimum: 0, description: Нижняя граница 80 % (p10) }
+        hi: { type: [number, 'null'], minimum: 0, description: Верхняя граница 80 % (p90) }
+
+    SeriesForecast:
+      type: object
+      required: [runId, datasetId, modelVersion, store, family, cutoffDate, intervalLevel, history, forecast, metrics, generatedAt]
+      properties:
+        runId: { type: [string, 'null'], format: uuid, description: null — готового прогона ещё нет }
+        datasetId: { type: string, format: uuid }
+        modelVersion: { type: [string, 'null'] }
+        store: { type: string, description: 'Эхо фильтра: all или номер строкой' }
+        family: { type: string, description: Эхо фильтра }
+        cutoffDate:
+          oneOf: [ { $ref: '#/components/schemas/LocalDate' }, { type: 'null' } ]
+          description: Последняя дата истории прогона; вертикальная линия «сегодня» на графике
+        intervalLevel: { type: number, const: 0.8 }
+        history:
+          type: array
+          items: { $ref: '#/components/schemas/HistoryPoint' }
+        forecast:
+          type: array
+          description: Даты cutoffDate+1 .. cutoffDate+horizon, без пропусков
+          items: { $ref: '#/components/schemas/ForecastPoint' }
+        metrics:
+          oneOf: [ { $ref: '#/components/schemas/Metrics' }, { type: 'null' } ]
+        generatedAt: { type: [string, 'null'], format: date-time, description: finishedAt прогона }
+
+    ProblemDetails:
+      type: object
+      description: RFC 9457. `type` в заглушке можно оставлять `about:blank`
+      required: [title, status]
+      properties:
+        type: { type: string, default: about:blank }
+        title: { type: string }
+        status: { type: integer }
+        detail: { type: [string, 'null'] }
+        instance: { type: [string, 'null'] }
+        traceId: { type: [string, 'null'], description: Значение X-Correlation-Id }
+      additionalProperties: true
+
+    ValidationProblemDetails:
+      allOf:
+        - $ref: '#/components/schemas/ProblemDetails'
+        - type: object
+          required: [errors]
+          properties:
+            errors:
+              type: object
+              description: 'Имя поля (camelCase) -> список сообщений, например {"horizon": ["must be 1..16"]}'
+              additionalProperties:
+                type: array
+                items: { type: string }
