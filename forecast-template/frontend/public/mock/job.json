@@ -1,0 +1,17 @@
+{
+  "jobId": "5d0c8a3b-1e2f-4a7b-9c6d-0e1f2a3b4c5d",
+  "kind": "import",
+  "status": "done",
+  "progress": 1,
+  "message": "Готово",
+  "datasetId": "3f1c2a9e-7b1d-4c55-9a51-2b0c1d7e8f00",
+  "rows": 3000888,
+  "seriesCount": 1782,
+  "dateFrom": "2013-01-01",
+  "dateTo": "2017-08-15",
+  "warnings": [],
+  "error": null,
+  "createdAt": "2017-08-16T06:00:00Z",
+  "startedAt": "2017-08-16T06:00:01Z",
+  "finishedAt": "2017-08-16T06:01:30Z"
+}

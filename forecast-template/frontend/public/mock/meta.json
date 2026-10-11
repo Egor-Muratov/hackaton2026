@@ -1,0 +1,426 @@
+{
+  "datasetId": "3f1c2a9e-7b1d-4c55-9a51-2b0c1d7e8f00",
+  "latestDatasetId": "3f1c2a9e-7b1d-4c55-9a51-2b0c1d7e8f00",
+  "stores": [
+    {
+      "storeNbr": 1,
+      "city": "Quito",
+      "state": "Pichincha",
+      "type": "D",
+      "cluster": 13
+    },
+    {
+      "storeNbr": 2,
+      "city": "Quito",
+      "state": "Pichincha",
+      "type": "D",
+      "cluster": 13
+    },
+    {
+      "storeNbr": 3,
+      "city": "Quito",
+      "state": "Pichincha",
+      "type": "D",
+      "cluster": 8
+    },
+    {
+      "storeNbr": 4,
+      "city": "Quito",
+      "state": "Pichincha",
+      "type": "D",
+      "cluster": 9
+    },
+    {
+      "storeNbr": 5,
+      "city": "Santo Domingo",
+      "state": "Santo Domingo de los Tsachilas",
+      "type": "D",
+      "cluster": 4
+    },
+    {
+      "storeNbr": 6,
+      "city": "Quito",
+      "state": "Pichincha",
+      "type": "D",
+      "cluster": 13
+    },
+    {
+      "storeNbr": 7,
+      "city": "Quito",
+      "state": "Pichincha",
+      "type": "D",
+      "cluster": 8
+    },
+    {
+      "storeNbr": 8,
+      "city": "Quito",
+      "state": "Pichincha",
+      "type": "D",
+      "cluster": 8
+    },
+    {
+      "storeNbr": 9,
+      "city": "Quito",
+      "state": "Pichincha",
+      "type": "B",
+      "cluster": 6
+    },
+    {
+      "storeNbr": 10,
+      "city": "Quito",
+      "state": "Pichincha",
+      "type": "C",
+      "cluster": 15
+    },
+    {
+      "storeNbr": 11,
+      "city": "Cayambe",
+      "state": "Pichincha",
+      "type": "B",
+      "cluster": 6
+    },
+    {
+      "storeNbr": 12,
+      "city": "Latacunga",
+      "state": "Cotopaxi",
+      "type": "C",
+      "cluster": 15
+    },
+    {
+      "storeNbr": 13,
+      "city": "Latacunga",
+      "state": "Cotopaxi",
+      "type": "C",
+      "cluster": 15
+    },
+    {
+      "storeNbr": 14,
+      "city": "Riobamba",
+      "state": "Chimborazo",
+      "type": "C",
+      "cluster": 7
+    },
+    {
+      "storeNbr": 15,
+      "city": "Ibarra",
+      "state": "Imbabura",
+      "type": "C",
+      "cluster": 15
+    },
+    {
+      "storeNbr": 16,
+      "city": "Santo Domingo",
+      "state": "Santo Domingo de los Tsachilas",
+      "type": "C",
+      "cluster": 3
+    },
+    {
+      "storeNbr": 17,
+      "city": "Quito",
+      "state": "Pichincha",
+      "type": "C",
+      "cluster": 12
+    },
+    {
+      "storeNbr": 18,
+      "city": "Quito",
+      "state": "Pichincha",
+      "type": "B",
+      "cluster": 16
+    },
+    {
+      "storeNbr": 19,
+      "city": "Guaranda",
+      "state": "Bolivar",
+      "type": "C",
+      "cluster": 15
+    },
+    {
+      "storeNbr": 20,
+      "city": "Quito",
+      "state": "Pichincha",
+      "type": "B",
+      "cluster": 6
+    },
+    {
+      "storeNbr": 21,
+      "city": "Santo Domingo",
+      "state": "Santo Domingo de los Tsachilas",
+      "type": "B",
+      "cluster": 6
+    },
+    {
+      "storeNbr": 22,
+      "city": "Puyo",
+      "state": "Pastaza",
+      "type": "C",
+      "cluster": 7
+    },
+    {
+      "storeNbr": 23,
+      "city": "Ambato",
+      "state": "Tungurahua",
+      "type": "D",
+      "cluster": 9
+    },
+    {
+      "storeNbr": 24,
+      "city": "Guayaquil",
+      "state": "Guayas",
+      "type": "D",
+      "cluster": 1
+    },
+    {
+      "storeNbr": 25,
+      "city": "Salinas",
+      "state": "Santa Elena",
+      "type": "D",
+      "cluster": 1
+    },
+    {
+      "storeNbr": 26,
+      "city": "Guayaquil",
+      "state": "Guayas",
+      "type": "D",
+      "cluster": 10
+    },
+    {
+      "storeNbr": 27,
+      "city": "Daule",
+      "state": "Guayas",
+      "type": "D",
+      "cluster": 1
+    },
+    {
+      "storeNbr": 28,
+      "city": "Guayaquil",
+      "state": "Guayas",
+      "type": "E",
+      "cluster": 10
+    },
+    {
+      "storeNbr": 29,
+      "city": "Guayaquil",
+      "state": "Guayas",
+      "type": "E",
+      "cluster": 10
+    },
+    {
+      "storeNbr": 30,
+      "city": "Guayaquil",
+      "state": "Guayas",
+      "type": "C",
+      "cluster": 3
+    },
+    {
+      "storeNbr": 31,
+      "city": "Babahoyo",
+      "state": "Los Rios",
+      "type": "B",
+      "cluster": 10
+    },
+    {
+      "storeNbr": 32,
+      "city": "Guayaquil",
+      "state": "Guayas",
+      "type": "C",
+      "cluster": 3
+    },
+    {
+      "storeNbr": 33,
+      "city": "Quevedo",
+      "state": "Los Rios",
+      "type": "C",
+      "cluster": 3
+    },
+    {
+      "storeNbr": 34,
+      "city": "Guayaquil",
+      "state": "Guayas",
+      "type": "B",
+      "cluster": 6
+    },
+    {
+      "storeNbr": 35,
+      "city": "Playas",
+      "state": "Guayas",
+      "type": "C",
+      "cluster": 3
+    },
+    {
+      "storeNbr": 36,
+      "city": "Libertad",
+      "state": "Guayas",
+      "type": "E",
+      "cluster": 10
+    },
+    {
+      "storeNbr": 37,
+      "city": "Cuenca",
+      "state": "Azuay",
+      "type": "D",
+      "cluster": 2
+    },
+    {
+      "storeNbr": 38,
+      "city": "Loja",
+      "state": "Loja",
+      "type": "D",
+      "cluster": 4
+    },
+    {
+      "storeNbr": 39,
+      "city": "Cuenca",
+      "state": "Azuay",
+      "type": "B",
+      "cluster": 6
+    },
+    {
+      "storeNbr": 40,
+      "city": "Machala",
+      "state": "El Oro",
+      "type": "C",
+      "cluster": 3
+    },
+    {
+      "storeNbr": 41,
+      "city": "Machala",
+      "state": "El Oro",
+      "type": "D",
+      "cluster": 4
+    },
+    {
+      "storeNbr": 42,
+      "city": "Cuenca",
+      "state": "Azuay",
+      "type": "D",
+      "cluster": 2
+    },
+    {
+      "storeNbr": 43,
+      "city": "Esmeraldas",
+      "state": "Esmeraldas",
+      "type": "E",
+      "cluster": 10
+    },
+    {
+      "storeNbr": 44,
+      "city": "Quito",
+      "state": "Pichincha",
+      "type": "A",
+      "cluster": 5
+    },
+    {
+      "storeNbr": 45,
+      "city": "Quito",
+      "state": "Pichincha",
+      "type": "A",
+      "cluster": 11
+    },
+    {
+      "storeNbr": 46,
+      "city": "Quito",
+      "state": "Pichincha",
+      "type": "A",
+      "cluster": 14
+    },
+    {
+      "storeNbr": 47,
+      "city": "Quito",
+      "state": "Pichincha",
+      "type": "A",
+      "cluster": 14
+    },
+    {
+      "storeNbr": 48,
+      "city": "Quito",
+      "state": "Pichincha",
+      "type": "A",
+      "cluster": 14
+    },
+    {
+      "storeNbr": 49,
+      "city": "Quito",
+      "state": "Pichincha",
+      "type": "A",
+      "cluster": 11
+    },
+    {
+      "storeNbr": 50,
+      "city": "Ambato",
+      "state": "Tungurahua",
+      "type": "A",
+      "cluster": 14
+    },
+    {
+      "storeNbr": 51,
+      "city": "Guayaquil",
+      "state": "Guayas",
+      "type": "A",
+      "cluster": 17
+    },
+    {
+      "storeNbr": 52,
+      "city": "Manta",
+      "state": "Manabi",
+      "type": "A",
+      "cluster": 11
+    },
+    {
+      "storeNbr": 53,
+      "city": "Manta",
+      "state": "Manabi",
+      "type": "D",
+      "cluster": 13
+    },
+    {
+      "storeNbr": 54,
+      "city": "El Carmen",
+      "state": "Manabi",
+      "type": "C",
+      "cluster": 3
+    }
+  ],
+  "families": [
+    "AUTOMOTIVE",
+    "BABY CARE",
+    "BEAUTY",
+    "BEVERAGES",
+    "BOOKS",
+    "BREAD/BAKERY",
+    "CELEBRATION",
+    "CLEANING",
+    "DAIRY",
+    "DELI",
+    "EGGS",
+    "FROZEN FOODS",
+    "GROCERY I",
+    "GROCERY II",
+    "HARDWARE",
+    "HOME AND KITCHEN I",
+    "HOME AND KITCHEN II",
+    "HOME APPLIANCES",
+    "HOME CARE",
+    "LADIESWEAR",
+    "LAWN AND GARDEN",
+    "LINGERIE",
+    "LIQUOR,WINE,BEER",
+    "MAGAZINES",
+    "MEATS",
+    "PERSONAL CARE",
+    "PET SUPPLIES",
+    "PLAYERS AND ELECTRONICS",
+    "POULTRY",
+    "PREPARED FOODS",
+    "PRODUCE",
+    "SCHOOL AND OFFICE SUPPLIES",
+    "SEAFOOD"
+  ],
+  "seriesCount": 1782,
+  "historyFrom": "2013-01-01",
+  "historyTo": "2017-08-15",
+  "maxHorizon": 16,
+  "intervalLevel": 0.8,
+  "latestRunId": "9b2e4d17-5c3a-4f6e-8d21-7a0b9c1e2f34",
+  "modelVersion": "mock-lgbm-2017-08-15"
+}

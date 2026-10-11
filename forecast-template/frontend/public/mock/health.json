@@ -1,0 +1,8 @@
+{
+  "status": "Healthy",
+  "checks": {
+    "db": "Healthy",
+    "ml": "Healthy"
+  },
+  "modelVersion": "mock-lgbm-2017-08-15"
+}

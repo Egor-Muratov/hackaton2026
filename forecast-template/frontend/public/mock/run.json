@@ -1,0 +1,18 @@
+{
+  "runId": "9b2e4d17-5c3a-4f6e-8d21-7a0b9c1e2f34",
+  "datasetId": "3f1c2a9e-7b1d-4c55-9a51-2b0c1d7e8f00",
+  "status": "done",
+  "horizon": 16,
+  "cutoffDate": "2017-08-15",
+  "modelVersion": "mock-lgbm-2017-08-15",
+  "intervalLevel": 0.8,
+  "metrics": {
+    "rmsle": 0.401,
+    "mae": 71.8,
+    "baselineRmsle": 0.523
+  },
+  "error": null,
+  "createdAt": "2017-08-16T06:10:02Z",
+  "startedAt": "2017-08-16T06:10:03Z",
+  "finishedAt": "2017-08-16T06:12:41Z"
+}

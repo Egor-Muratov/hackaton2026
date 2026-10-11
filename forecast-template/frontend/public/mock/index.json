@@ -1,0 +1,34 @@
+{
+  "series": [
+    {
+      "store": "all",
+      "family": "all",
+      "file": "forecast_all_all.json"
+    },
+    {
+      "store": "all",
+      "family": "GROCERY I",
+      "file": "forecast_all_GROCERY_I.json"
+    },
+    {
+      "store": "44",
+      "family": "all",
+      "file": "forecast_44_all.json"
+    },
+    {
+      "store": "44",
+      "family": "GROCERY I",
+      "file": "forecast_44_GROCERY_I.json"
+    },
+    {
+      "store": "44",
+      "family": "BEVERAGES",
+      "file": "forecast_44_BEVERAGES.json"
+    },
+    {
+      "store": "1",
+      "family": "PRODUCE",
+      "file": "forecast_1_PRODUCE.json"
+    }
+  ]
+}
