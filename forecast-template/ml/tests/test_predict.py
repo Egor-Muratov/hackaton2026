@@ -15,12 +15,13 @@ from app import main
 DS = "3f1c2a9e-7b1d-4c55-9a51-2b0c1d7e8f00"
 CUTOFF = date(2017, 8, 15)
 KEYS = [(1, "AUTOMOTIVE"), (1, "BOOKS"), (44, "GROCERY I"), (2, "AUTOMOTIVE")]
+FIRST = date(2017, 1, 1)  # синтетика существует только с этой даты, как реальный датасет
 
 
 def fake_rows(s, dataset_id, start, end):
     if str(dataset_id) != DS:
         return []
-    rows, d = [], start + timedelta(days=1)
+    rows, d = [], max(start + timedelta(days=1), FIRST)
     while d <= end:
         for n, (store, fam) in enumerate(KEYS):
             if d <= CUTOFF:
@@ -69,7 +70,7 @@ def test_predict_all(client):
     assert all(v == dates for v in per.values()) and len(per) == len(KEYS)
     assert [a["date"] for a in j["aggregate"]] == sorted(dates)
     total = sum(p["yhat"] for p in j["forecasts"] if p["date"] == "2017-08-16")
-    assert math.isclose(j["aggregate"][0]["yhat"], total, rel_tol=1e-6)
+    assert math.isclose(j["aggregate"][0]["yhat"], total, abs_tol=1e-3)  # yhat округляются до 4 знаков по отдельности
     assert {"rmsle", "mae", "baseline_rmsle"} <= set(j["cv_metrics"])
     assert any(w.startswith("series_all_zero: 1") for w in j["warnings"])
     books = [p for p in j["forecasts"] if p["series_key"]["family"] == "BOOKS"]

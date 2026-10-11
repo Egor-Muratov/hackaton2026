@@ -46,6 +46,6 @@
 
 - [x] Достроить npm (без orval), выполнить `tsc` и `npm run build` — сделано, `package-lock.json` закоммичен
 - [ ] Посмотреть дашборд глазами в браузере (http://localhost:5173)
-- [ ] Докачать pandas, lightgbm, scikit-learn, holidays и pytest; прогнать pytest ML
+- [x] Докачать pandas, lightgbm, scikit-learn, holidays и pytest (запас wheels — 92 МБ, ~85 мин); pytest ML: 16/16 после исправления двух ошибок в самих тестах
 - [ ] Собрать запас образов: `postgres:16-alpine`, `nginx:alpine`, `dotnet/sdk:10.0`, `dotnet/aspnet:10.0`, `python:3.11-slim`, `node:24-alpine`. При этой сети — с другой машины или ночью
 - [ ] Обновить контракты по таблице решений выше
