@@ -1,0 +1,32 @@
+# Конфиг ML-сервиса. На хакатоне задача меняется здесь (+ series/ml_observations в init.sql).
+source:
+  view: ml_observations          # единственный объект, доступный ml_reader
+  date_col: date
+  target: sales
+series_keys: [store_nbr, family]  # = колонки-ключи view, = имена полей series_key в API
+freq: D
+horizon: 16                       # максимальный горизонт модели; больше -> 422
+metric: rmsle
+target_transform: log1p           # baseline считается в log1p, прогноз expm1 + clip(0)
+
+model:
+  kind: dow_mean                  # dow_mean (бейзлайн). Неизвестный kind -> model_loaded=false, /predict 503
+  version: baseline-dowmean-4w-v0.1
+  weeks: 4                        # N: среднее по дню недели за последние N недель до cutoff
+
+interval:
+  default: 0.8                    # 0.8 -> p10/p90
+  backtest_folds: 8               # K последних отсечек для остатков
+  backtest_step_days: 7           # шаг между отсечками (окна перекрываются)
+  group_by: family                # квантили остатков по группе и шагу горизонта; null -> только по шагу
+  min_group_samples: 50           # меньше -> глобальные квантили шага
+  zero_weeks: 4                   # ряд из нулей за последние N недель -> прогноз 0, интервал [0, 0]
+
+exog_future: [onpromotion]        # известные будущие признаки (бейзлайн их не использует)
+exog_future_default: 0
+
+# Заготовка: бейзлайн праздники не использует. Пути относительно DATA_DIR.
+holidays:
+  country: EC
+  file: store-sales/holidays_events.csv
+  regional_match: {Regional: state, Local: city}
