@@ -83,7 +83,7 @@ RUN if [ "$OFFLINE" = 1 ]; then pip install --no-index --find-links /wheels -r r
 Сборка без сети (проверено 2026-10-12, у всех трёх образов `BUILD_NETWORK=none`):
 `make offline-load && OFFLINE=1 OFFLINE_DIR=/abs/path/offline make build`. npm-запас содержит платформенные пакеты и для glibc, и для musl (образ `node:alpine`).
 
-Healthcheck в compose ожидает: `api` отдаёт `GET /health/live` и в образе есть `curl`; в `ml` есть `python` и `GET /health`; во `frontend` (nginx-alpine) есть `wget`. Порты: api 8080, ml 8000, frontend 80.
+Healthcheck в compose ожидает: `api` отдаёт `GET /health/live` и в образе есть `bash` (проверка через `/dev/tcp`: curl в aspnet нет, а `apt-get` ломает офлайн-сборку); в `ml` есть `python` и `GET /health`; во `frontend` (nginx-alpine) есть `wget`. Порты: api 8080, ml 8000, frontend 80.
 
 ## Переменные и секреты
 

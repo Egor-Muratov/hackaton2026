@@ -119,7 +119,7 @@ parts=("$@"); (( ${#parts[@]} )) || parts=(images wheels nuget npm)
 mkdir -p "$OUT"
 for p in "${parts[@]}"; do "pack_$p"; done
 
-( cd "$OUT" && find . -type f ! -name SHA256SUMS ! -name '*.part' -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS ) 2>/dev/null
+( cd "$OUT" && find . -type f ! -name SHA256SUMS ! -name MANIFEST.txt ! -name '*.part' -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS ) 2>/dev/null
 { echo "packed: $(date -Is) on $(hostname)"; du -sh "$OUT"/* 2>/dev/null; } > "$OUT/MANIFEST.txt"
 cat "$OUT/MANIFEST.txt"
 if (( ${#FAILED[@]} )); then log "НЕ УДАЛОСЬ: ${FAILED[*]}"; exit 1; fi
