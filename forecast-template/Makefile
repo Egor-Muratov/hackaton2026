@@ -9,7 +9,7 @@ OFFLINE_DIR ?=
 override OFFLINE_DIR := $(if $(OFFLINE_DIR),$(abspath $(OFFLINE_DIR)),$(ROOT)/offline)
 export OFFLINE_DIR
 # .env, а если его ещё нет (CI, первая проверка) — .env.example; выбирается в момент запуска
-COMPOSE     := docker compose --env-file $$([ -f .env ] && echo .env || echo .env.example) -f infra/docker-compose.yml
+COMPOSE     := env $$(infra/scripts/images-env.sh) docker compose --env-file $$([ -f .env ] && echo .env || echo .env.example) -f infra/docker-compose.yml
 API_URL     ?= http://localhost:5080
 SVC         ?=
 
@@ -42,6 +42,12 @@ setup: env offline-dirs ## Проверка инструментов + пров�
 
 check-network: ## Только проверка сети
 	@infra/scripts/check-network.sh
+
+check-images: ## Все ссылки на базовые образы совпадают с infra/images.lock, плавающих тегов нет
+	@python3 infra/scripts/check-images.py
+
+pin-images: ## Пере-зафиксировать образы: images.txt -> digest -> images.lock -> переписать ссылки
+	@infra/scripts/pin-images.sh && python3 infra/scripts/check-images.py --fix
 
 env: ## Создать .env из .env.example, если его нет
 	@[ -f .env ] || { cp .env.example .env; chmod 600 .env; echo "создан .env из .env.example: поменяйте пароли"; }

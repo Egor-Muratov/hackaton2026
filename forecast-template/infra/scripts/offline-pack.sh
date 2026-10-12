@@ -14,7 +14,8 @@ OUT=${OFFLINE_DIR:-$ROOT/offline}; [[ $OUT = /* ]] || OUT="$ROOT/$OUT"
 PY_VER=${PY_VER:-3.11}
 IMAGE_TAG=${IMAGE_TAG:-local}
 REGISTRY_PREFIX=${REGISTRY_PREFIX:-forecast}
-BASE_IMAGES=(${BASE_IMAGES:-postgres:16-alpine nginx:1.27-alpine mcr.microsoft.com/dotnet/sdk:10.0 mcr.microsoft.com/dotnet/aspnet:10.0 python:3.11-slim node:24-alpine})
+# Базовые образы приложения — из infra/images.lock (точный тег@digest); CI-образы (DOCKER_*, ALPINE_*) не берём.
+BASE_IMAGES=(${BASE_IMAGES:-$(grep -E '^(POSTGRES|NGINX|PYTHON|NODE|DOTNET_SDK|DOTNET_ASPNET)_IMAGE=' "$ROOT/infra/images.lock" | cut -d= -f2- | tr '\n' ' ')})
 APP_IMAGES=("$REGISTRY_PREFIX/api:$IMAGE_TAG" "$REGISTRY_PREFIX/ml:$IMAGE_TAG" "$REGISTRY_PREFIX/frontend:$IMAGE_TAG")
 FAILED=()
 
@@ -23,8 +24,17 @@ retry() { local n=1; until "$@"; do (( n >= 4 )) && return 1; log "повтор 
 
 pack_images() {
   mkdir -p "$OUT/images"
-  for img in "${BASE_IMAGES[@]}" "${APP_IMAGES[@]}"; do
+  for ref in "${BASE_IMAGES[@]}" "${APP_IMAGES[@]}"; do
+    # Сохраняем по тегу БЕЗ digest: после docker load классическое хранилище теряет digest, а тег
+    # остаётся. Неизменность образа гарантирует файл .id (offline-load.sh сверяет ID).
+    local img=${ref%@sha256:*}
     local f="$OUT/images/$(echo "$img" | tr '/:' '__').tar.gz"
+    if [[ $ref != "$img" ]] && docker image inspect "$ref" >/dev/null 2>&1; then
+      docker tag "$ref" "$img"                     # уже скачан по digest: вешаем точный тег
+    elif [[ $ref != "$img" ]]; then
+      retry docker pull "$ref" || { FAILED+=("pull $ref"); continue; }
+      docker tag "$ref" "$img"
+    fi
     if ! docker image inspect "$img" >/dev/null 2>&1; then
       if [[ ${NO_PULL:-0} == 1 || " ${APP_IMAGES[*]} " == *" $img "* ]]; then log "нет локально, пропускаю: $img"; continue; fi
       retry docker pull "$img" || { FAILED+=("pull $img"); continue; }

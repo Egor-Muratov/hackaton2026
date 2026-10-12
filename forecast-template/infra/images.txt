@@ -1,0 +1,12 @@
+# Точные теги базовых образов (выбраны 2026-10-12). После правки: infra/scripts/pin-images.sh
+# Плавающие теги (16-alpine, 3.11-slim, sdk:10.0, nginx:alpine) запрещены: make check-images.
+POSTGRES_IMAGE=postgres:16.15-alpine3.24
+NGINX_IMAGE=nginx:1.30.5-alpine3.24
+PYTHON_IMAGE=python:3.11.17-slim-bookworm
+NODE_IMAGE=node:24.21.0-alpine3.24
+DOTNET_SDK_IMAGE=mcr.microsoft.com/dotnet/sdk:10.0.401
+DOTNET_ASPNET_IMAGE=mcr.microsoft.com/dotnet/aspnet:10.0.12
+# только для CI (в офлайн-запас образов приложения не входят)
+DOCKER_CLI_IMAGE=docker:29.9.0-cli
+DOCKER_DIND_IMAGE=docker:29.9.0-dind
+ALPINE_IMAGE=alpine:3.24.2

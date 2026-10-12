@@ -19,6 +19,18 @@ for f in "$IN"/images/*.tar.gz "$IN"/images/*.tar; do
   log "docker load $(basename "$f")"; docker load -i "$f" && n=$((n+1)) || log "ОШИБКА загрузки $f"
 done
 log "загружено образов: $n"
+
+# Сверка с infra/images.lock: тег на месте и ID совпадает с записанным при offline-pack (замена digest).
+bad=0
+while IFS= read -r ref; do
+  img=${ref%@sha256:*}; f="$IN/images/$(echo "$img" | tr '/:' '__').tar.gz"
+  have=$(docker image inspect -f '{{.Id}}' "$img" 2>/dev/null || true)
+  if [[ -z $have ]]; then log "НЕТ образа $img (нет в запасе?)"; bad=1
+  elif [[ ! -f $f.id ]]; then log "нет $f.id — не могу проверить $img"; bad=1
+  elif [[ $have != "$(cat "$f.id")" ]]; then log "ID НЕ СОВПАДАЕТ: $img ($have != $(cat "$f.id"))"; bad=1
+  else log "OK $img"; fi
+done < <(grep -E '^(POSTGRES|NGINX|PYTHON|NODE|DOTNET_SDK|DOTNET_ASPNET)_IMAGE=' "$ROOT/infra/images.lock" | cut -d= -f2-)
+(( bad )) && log "ВНИМАНИЕ: базовые образы не сходятся с images.lock — сборка OFFLINE=1 пойдёт в сеть или упадёт"
 mkdir -p "$IN/wheels" "$IN/nuget" "$IN/npm"
 
 cat <<HINT
