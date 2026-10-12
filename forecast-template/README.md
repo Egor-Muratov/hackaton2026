@@ -66,18 +66,22 @@ Makefile, .env.example, .gitlab-ci.yml
 
 ## Контракт образов (для авторов Dockerfile)
 
-compose передаёт в каждую сборку build args `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY` (предопределённые, объявлять не нужно), а также `OFFLINE` (`0`/`1`), `MIRROR_PIP_INDEX`, `MIRROR_NPM_REGISTRY`, `MIRROR_NUGET_SOURCE`, для фронта ещё `VITE_API_MODE=live`. Офлайн-запас доступен как именованный контекст `offline` с подкаталогами `wheels/`, `nuget/`, `npm/` (они всегда существуют, но могут быть пустыми). Пример для ML:
+compose передаёт в каждую сборку build args `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY` (предопределённые, объявлять не нужно), а также `OFFLINE` (`0`/`1`), `MIRROR_PIP_INDEX`, `MIRROR_NPM_REGISTRY`, `MIRROR_NUGET_SOURCE`, для фронта ещё `VITE_API_MODE=live`. Офлайн-запас доступен как именованный контекст `offline` с подкаталогами `wheels/`, `nuget/`, `npm/`. Каждый Dockerfile объявляет одноимённую стадию-заглушку с пустыми папками, а compose подменяет её каталогом запаса:
 
 ```dockerfile
-# syntax=docker/dockerfile:1.7
+FROM ${PYTHON_IMAGE} AS offline          # заглушка; compose: additional_contexts: offline -> каталог запаса
+RUN mkdir -p /wheels /nuget /npm
+FROM ${PYTHON_IMAGE}
 ARG OFFLINE=0
-ARG MIRROR_PIP_INDEX=
-RUN --mount=type=bind,from=offline,source=wheels,target=/offline/wheels \
-    if [ "$OFFLINE" = 1 ]; then pip install --no-index --find-links /offline/wheels -r requirements.txt; \
-    else pip install --retries 10 --timeout 60 ${MIRROR_PIP_INDEX:+--index-url $MIRROR_PIP_INDEX} -r requirements.txt; fi
+COPY --from=offline /wheels /wheels
+RUN if [ "$OFFLINE" = 1 ]; then pip install --no-index --find-links /wheels -r requirements.txt; \
+    else pip install --find-links /wheels -r requirements.txt; fi
 ```
 
-Для .NET: `--mount=type=bind,from=offline,source=nuget,target=/offline/nuget` и `dotnet restore --source /offline/nuget` при `OFFLINE=1`. Для npm: `npm ci --offline --cache /offline/npm`. kaniko не поддерживает ни именованные контексты, ни `RUN --mount`: если Dockerfile их использует, в registry-пути ставьте `BUILD_TOOL=dind` (нужен privileged runner) или собирайте на VM (`BUILD_MODE=vm`).
+Так работают оба пути. С compose при `OFFLINE=1` сборка идёт строго из запаса: .NET — `dotnet restore --source /offline/nuget`, npm — `npm ci --offline --cache /offline/npm`. kaniko и обычный `docker build` без контекста берут заглушку и собирают онлайн, поэтому `RUN --mount` не нужен.
+
+Сборка без сети (проверено 2026-10-12, у всех трёх образов `BUILD_NETWORK=none`):
+`make offline-load && OFFLINE=1 OFFLINE_DIR=/abs/path/offline make build`. npm-запас содержит платформенные пакеты и для glibc, и для musl (образ `node:alpine`).
 
 Healthcheck в compose ожидает: `api` отдаёт `GET /health/live` и в образе есть `curl`; в `ml` есть `python` и `GET /health`; во `frontend` (nginx-alpine) есть `wget`. Порты: api 8080, ml 8000, frontend 80.
 

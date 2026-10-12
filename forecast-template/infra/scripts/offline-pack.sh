@@ -101,6 +101,17 @@ pack_npm() {
   log "npm $cmd в временной копии (кэш -> $OUT/npm)"
   ( cd "$tmp" && retry npm "$cmd" --cache "$OUT/npm" --prefer-offline --no-audit --no-fund \
       --fetch-retries 5 --fetch-retry-mintimeout 20000 --fetch-retry-maxtimeout 120000 "${reg[@]}" ) || FAILED+=("npm")
+  # Урок репетиции: npm ci кладёт в кэш платформенные пакеты только для ЭТОЙ машины (glibc), а образ
+  # node:alpine — musl. Без @rollup/rollup-linux-x64-musl `npm ci --offline` молча пропускает его и
+  # падает уже vite build. Докладываем все linux-x64 варианты (gnu и musl) из lock-файла.
+  if [[ -f $tmp/package-lock.json ]]; then
+    local p
+    for p in $(cd "$tmp" && node -e 'const l=require("./package-lock.json").packages||{};
+        for (const [k,v] of Object.entries(l)) if (v.optional && (v.os||[]).includes("linux") && (v.cpu||[]).includes("x64"))
+          console.log(k.replace(/^.*node_modules\//,"")+"@"+v.version)'); do
+      retry npm cache add "$p" --cache "$OUT/npm" "${reg[@]}" >/dev/null || FAILED+=("npm cache add $p")
+    done
+  fi
   rm -rf "$tmp"
 }
 

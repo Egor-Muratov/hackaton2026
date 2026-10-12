@@ -48,7 +48,7 @@
 - [x] Дашборд посмотрен в браузере в **мок-режиме** — устраивает. В живом режиме против API глазами ещё не смотрели
 - [x] Докачать pandas, lightgbm, scikit-learn, holidays и pytest (запас wheels — 92 МБ, ~85 мин); pytest ML: 16/16 после исправления двух ошибок в самих тестах
 - [x] Запас базовых образов (2026-10-12, 750 МБ, 3,5 мин при сети ~600 КБ/с). Версии зафиксированы точным тегом и digest в `infra/images.lock` (подробности ниже)
-- [ ] Офлайн-сборка `api` (restore в Dockerfile жёстко на nuget.org) и `frontend` (`npm ci` без кэша из запаса): проверена только `ml`
+- [x] Офлайн-сборка всех трёх образов при `BUILD_NETWORK=none`: api 26 с, frontend 40 с, ml 34 с (см. ниже)
 - [ ] Обновить контракты по таблице решений выше
 
 ## Фиксация базовых образов (2026-10-12)
@@ -76,3 +76,12 @@
 - `OFFLINE=1` → `images-env.sh` передаёт в compose и Dockerfile ссылки без digest.
 
 **Проверено.** Удалил 6 образов → `offline-load` (44 с, все ID совпали) → `docker compose build ml` с `OFFLINE=1` и `BUILD_NETWORK=none` → собрано за 39 с. После сборки у `python` по-прежнему `RepoDigests=[]`, то есть registry не использовался.
+
+## Офлайн-сборка api, frontend и ml (2026-10-12)
+
+- В каждом Dockerfile есть стадия-заглушка `offline` (пустые `wheels/ nuget/ npm/`). compose подменяет её каталогом запаса через `additional_contexts`. kaniko и обычный `docker build` берут заглушку и собирают онлайн, CI-путь не сломан (проверено сборкой ML без контекста).
+- При `OFFLINE=1` все установки идут строго из запаса: `dotnet restore --source /offline/nuget`, `npm ci --offline --cache /offline/npm`, `pip --no-index`. Если чего-то нет, сборка падает, а не уходит тихо в сеть.
+- Убрано ручное копирование колёс в `ml/wheels/`.
+- **Ловушка платформ.** npm-кэш, собранный на хосте с glibc, не содержит `@rollup/rollup-linux-x64-musl` для `node:alpine`. `npm ci --offline` молча пропускает необязательную зависимость, и падает уже `vite build`. `offline-pack` теперь докладывает в кэш все linux-x64 варианты (gnu и musl) из lock-файла.
+- Запас в итоге: образы 719 МБ, wheels 92 МБ, nuget 51 МБ, npm 43 МБ.
+- Не исправлено: по умолчанию compose ищет запас в `forecast-template/offline`, а здесь он лежит в `hackaton/offline`. На хакатоне класть запас внутрь шаблона или задавать `OFFLINE_DIR`.
